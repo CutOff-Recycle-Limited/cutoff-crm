@@ -10,6 +10,22 @@ const PRIORITY_COLORS  = { high: "danger", medium: "warn", low: "" };
 const SCORE_COLORS     = { hot: "#a6432d", warm: "#9c4d15", cold: "#5d6a60" };
 const SCORE_ICONS      = { hot: "🔥", warm: "🟡", cold: "🔵" };
 
+function taskStatusLabel(status) {
+  return String(status || "pending").replace(/_/g, " ");
+}
+
+function formatTaskDueDate(value) {
+  if (!value) return "No due date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No due date";
+  return `Due ${date.toLocaleDateString()}`;
+}
+
+function isTaskOverdue(task) {
+  if (!task.due_date || task.status === "completed") return false;
+  return new Date(task.due_date) < new Date();
+}
+
 function EditInteractionPanel({ interaction, onClose, onSaved }) {
   const [form, setForm] = useState({
     channel:   interaction.channel   || "call",
@@ -359,8 +375,15 @@ export function Customer360Page({ customerId }) {
   if (!viewer)  return <AuthRequired />;
   if (!data)    return <p className="subtle">Customer not found.</p>;
 
-  const { customer, interactions, tasks } = data;
-  const openTasks       = tasks.filter((t) => t.status !== "completed");
+  const { customer, interactions, tasks = [] } = data;
+  const linkedTasks     = tasks;
+  const tasksByInteractionId = linkedTasks.reduce((map, task) => {
+    if (!task.interaction_id) return map;
+    const existing = map.get(task.interaction_id) || [];
+    existing.push(task);
+    map.set(task.interaction_id, existing);
+    return map;
+  }, new Map());
   const lastInteraction = interactions[0];
   const hasHighRisk     = interactions.some((i) => i.ai_insights?.[0]?.urgency === "high")
                        || interactions.some((i) => i.ai_insights?.[0]?.sentiment === "negative");
@@ -407,6 +430,7 @@ export function Customer360Page({ customerId }) {
             <div className="timeline">
               {interactions.map((item, idx) => {
                 const insight = item.ai_insights?.[0];
+                const interactionTasks = tasksByInteractionId.get(item.id) || [];
                 return (
                   <div key={item.id} className="timeline-item">
                     <div>
@@ -426,6 +450,18 @@ export function Customer360Page({ customerId }) {
                         <p style={{ margin: "0.3rem 0 0", color: "#5d6a60", fontSize: "0.78rem" }}>
                           💡 {insight.suggested_action}
                         </p>
+                      )}
+                      {interactionTasks.length > 0 && (
+                        <div style={{ display: "grid", gap: "0.35rem", marginTop: "0.45rem" }}>
+                          {interactionTasks.map((task) => (
+                            <div key={task.id} className="pill" style={{ display: "inline-flex", justifyContent: "space-between", gap: "0.5rem", width: "fit-content", maxWidth: "100%" }}>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                Ops task: {task.title}
+                              </span>
+                              <span>{taskStatusLabel(task.status)}</span>
+                            </div>
+                          ))}
+                        </div>
                       )}
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.3rem" }}>
                         <p style={{ margin: 0, color: "#5d6a60", fontSize: "0.75rem" }}>
@@ -504,28 +540,32 @@ export function Customer360Page({ customerId }) {
             </form>
           </section>
 
-          {/* Open tasks */}
+          {/* Linked Ops tasks */}
           <section className="card">
             <div className="section-head">
               <div>
                 <p className="eyebrow">Tasks</p>
-                <h2 style={{ margin: "0.2rem 0 0" }}>Open tasks</h2>
+                <h2 style={{ margin: "0.2rem 0 0" }}>Linked Ops tasks</h2>
               </div>
-              <span className="pill">{openTasks.length}</span>
+              <span className="pill">{linkedTasks.length}</span>
             </div>
-            {openTasks.length === 0 ? (
-              <p className="subtle">No open tasks.</p>
+            {linkedTasks.length === 0 ? (
+              <p className="subtle">No linked Ops tasks.</p>
             ) : (
               <div className="stack">
-                {openTasks.map((t) => (
-                  <div key={t.id} className={`list-card ${t.status !== "completed" && new Date(t.due_date) < new Date() ? "danger-border" : ""}`}>
+                {linkedTasks.map((t) => (
+                  <div key={t.id} className={`list-card ${isTaskOverdue(t) ? "danger-border" : ""}`}>
                     <div>
                       <h4 style={{ margin: 0, fontSize: "0.84rem" }}>{t.title}</h4>
                       <p style={{ margin: "0.2rem 0 0", fontSize: "0.75rem", color: "#5d6a60" }}>
-                        Due {new Date(t.due_date).toLocaleDateString()}
+                        {formatTaskDueDate(t.due_date)}
+                        {t.customers?.name ? ` · ${t.customers.name}` : ""}
                       </p>
                     </div>
-                    <span className={`pill ${PRIORITY_COLORS[t.priority]}`}>{t.priority}</span>
+                    <div className="chip-row" style={{ justifyContent: "flex-end" }}>
+                      <span className="pill">{taskStatusLabel(t.status)}</span>
+                      <span className={`pill ${PRIORITY_COLORS[t.priority]}`}>{t.priority}</span>
+                    </div>
                   </div>
                 ))}
               </div>
