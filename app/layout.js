@@ -14,7 +14,7 @@ const mulish = Mulish({
 
 export const metadata = {
   title: "CutOff CRM — Customer Command Center",
-  description: "Customer Command Center built with Next.js + Supabase.",
+  description: "Customer Command Center built with Next.js, Supabase Auth, and Neon/Postgres.",
 };
 
 export default async function RootLayout({ children }) {

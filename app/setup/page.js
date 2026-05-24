@@ -8,10 +8,9 @@ export default function SetupPage() {
         <div className="section-head">
           <div>
             <p className="eyebrow">Setup</p>
-            <h1>Connect Supabase</h1>
+            <h1>Connect CRM services</h1>
             <p className="subtle">
-              This app is ready, but it needs Supabase environment variables and schema setup before auth,
-              calls, tasks, and admin data can work.
+              This app uses Supabase for auth and Neon/Postgres for CRM application data.
             </p>
           </div>
           <span className={`status-badge ${isSupabaseConfigured ? "ok" : "warn"}`}>
@@ -23,22 +22,26 @@ export default function SetupPage() {
           <div className="info-block">
             <span>1. Add environment variables</span>
             <div className="code-list">
-              <code>NEXT_PUBLIC_SUPABASE_URL</code>
-              <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
+              <code>DATABASE_URL</code>
+              <code>NEXT_PUBLIC_AUTH_SUPABASE_URL</code>
+              <code>NEXT_PUBLIC_AUTH_SUPABASE_ANON_KEY</code>
+              <code>OPS_DEFAULT_OPERATION_ID</code>
+              <code>OPS_DEFAULT_WORKFLOW_ID</code>
+              <code>OPS_DEFAULT_STATUS_ID</code>
             </div>
           </div>
 
           <div className="info-block">
-            <span>2. Apply database schema</span>
+            <span>2. Apply shared database schema</span>
             <p className="subtle">
-              Run the SQL from <code>supabase/schema.sql</code> in your Supabase project.
+              Run the shared schema against Neon/Postgres after the Ops schema exists.
             </p>
           </div>
 
           <div className="info-block">
-            <span>3. Create a user in Supabase Auth</span>
+            <span>3. Map the authenticated user</span>
             <p className="subtle">
-              Add <code>role</code> in user metadata with either <code>admin</code> or <code>staff</code>.
+              Supabase Auth users must match a shared <code>users</code> row and CRM role.
             </p>
           </div>
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "../../../lib/auth";
-import { createSupabaseServerClient } from "../../../lib/supabase/server";
+import { query } from "../../../lib/db/client";
+import { listCustomers } from "../../../lib/db/crm-data";
 import { isSupabaseConfigured } from "../../../lib/supabase/config";
 
 export async function GET() {
@@ -13,14 +14,12 @@ export async function GET() {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
 
-  const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("customers")
-    .select("id, name, phone, region, type, source, created_at")
-    .order("created_at", { ascending: false });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data: data || [] });
+  try {
+    const data = await listCustomers();
+    return NextResponse.json({ data });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }
 
 export async function POST(request) {
@@ -34,20 +33,23 @@ export async function POST(request) {
   }
 
   const payload = await request.json();
-  const supabase = createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("customers")
-    .insert({
-      name:   payload.name,
-      phone:  payload.phone  || null,
-      region: payload.region || null,
-      type:   payload.type   || "lead",
-      source: payload.source || "manual",
-    })
-    .select("*")
-    .single();
+  try {
+    const result = await query(
+      `INSERT INTO customers (name, phone, region, type, source)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING *`,
+      [
+        payload.name,
+        payload.phone || null,
+        payload.region || null,
+        payload.type || "lead",
+        payload.source || "manual",
+      ],
+    );
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data }, { status: 201 });
+    return NextResponse.json({ data: result.rows[0] }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

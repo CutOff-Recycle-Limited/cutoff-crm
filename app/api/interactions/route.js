@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { analyzeInteraction, computeLeadScore } from "../../../lib/ai";
-import { requireSharedViewer, requireViewer } from "../../../lib/auth";
+import { requireSharedViewer } from "../../../lib/auth";
 import { createOpsTaskFromCrmInteraction, isOpsTaskConfigError } from "../../../shared/ops-tasks";
-import { createSupabaseServerClient } from "../../../lib/supabase/server";
+import { withTransaction } from "../../../lib/db/client";
+import { listInteractions } from "../../../lib/db/crm-data";
 import { isSupabaseConfigured } from "../../../lib/supabase/config";
 
 export async function GET() {
@@ -15,25 +16,12 @@ export async function GET() {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
 
-  const supabase = createSupabaseServerClient();
-  let query = supabase
-    .from("interactions")
-    .select(`
-      id, customer_id, staff_id, channel, direction,
-      content, outcome, duration, created_at,
-      customers ( id, name, phone, type ),
-      ai_insights ( sentiment, urgency, category, intent, suggested_action )
-    `)
-    .order("created_at", { ascending: false });
-
-  if (auth.viewer.role !== "admin") {
-    query = query.eq("staff_id", auth.viewer.id);
+  try {
+    const data = await listInteractions({ viewer: auth.viewer });
+    return NextResponse.json({ data });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
-
-  const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  return NextResponse.json({ data: data || [] });
 }
 
 export async function POST(request) {
@@ -41,90 +29,124 @@ export async function POST(request) {
     return NextResponse.json({ error: "Supabase not configured." }, { status: 500 });
   }
 
-  const auth = await requireViewer();
+  const auth = await requireSharedViewer();
   if (auth.error) {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
 
   const payload  = await request.json();
-  const supabase = createSupabaseServerClient();
-
-  // Auto-create customer if name provided instead of id
-  let customerId = payload.customer_id;
-  if (!customerId && payload.customer_name) {
-    const { data: customer, error: customerError } = await supabase
-      .from("customers")
-      .insert({
-        name:   payload.customer_name,
-        phone:  payload.customer_phone || null,
-        type:   payload.customer_type  || "lead",
-        source: "manual",
-      })
-      .select("id")
-      .single();
-
-    if (customerError) {
-      return NextResponse.json({ error: customerError.message }, { status: 500 });
-    }
-    customerId = customer.id;
-  }
-
-  if (!customerId) {
-    return NextResponse.json({ error: "customer_id or customer_name is required." }, { status: 400 });
-  }
-
-  // Insert interaction
-  const { data: interaction, error: interactionError } = await supabase
-    .from("interactions")
-    .insert({
-      customer_id: customerId,
-      staff_id:    auth.viewer.id,
-      channel:     payload.channel   || "call",
-      direction:   payload.direction || "outgoing",
-      content:     payload.content,
-      outcome:     payload.outcome   || null,
-      duration:    payload.duration  ? Number(payload.duration) : null,
-    })
-    .select("id, customer_id, staff_id, channel, direction, content, outcome, duration, created_at")
-    .single();
-
-  if (interactionError) {
-    return NextResponse.json({ error: interactionError.message }, { status: 500 });
-  }
-
-  // AI analysis
-  const insight = analyzeInteraction(interaction.content);
-  const { error: insightError } = await supabase.from("ai_insights").insert({
-    interaction_id: interaction.id,
-    ...insight,
-  });
-
-  if (insightError) {
-    return NextResponse.json({ error: insightError.message }, { status: 500 });
-  }
-
-  // Auto-update customer lead score based on this interaction
-  const newScore = computeLeadScore(interaction.outcome, insight.sentiment);
-  await supabase
-    .from("customers")
-    .update({ lead_score: newScore })
-    .eq("id", customerId);
-
-  // Auto-create task on follow_up outcome or high urgency
   let task = null;
   let taskWarning = null;
-  if (interaction.outcome === "follow_up" || insight.urgency === "high") {
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + (insight.urgency === "high" ? 1 : 2));
+  let interaction;
+  let insight;
+  let dueDate = null;
 
-    // Also set next_action_date on the customer
-    await supabase
-      .from("customers")
-      .update({ next_action_date: dueDate.toISOString(), next_action_note: insight.suggested_action })
-      .eq("id", customerId);
+  try {
+    ({ interaction, insight, dueDate } = await withTransaction(async (client) => {
+      let customerId = payload.customer_id;
 
+      if (!customerId && payload.customer_name) {
+        const customerResult = await client.query(
+          `INSERT INTO customers (name, phone, type, source)
+           VALUES ($1,$2,$3,'manual')
+           RETURNING id`,
+          [
+            payload.customer_name,
+            payload.customer_phone || null,
+            payload.customer_type || "lead",
+          ],
+        );
+        customerId = customerResult.rows[0].id;
+      }
+
+      if (!customerId) {
+        const error = new Error("customer_id or customer_name is required.");
+        error.status = 400;
+        throw error;
+      }
+
+      const interactionResult = await client.query(
+        `INSERT INTO interactions (
+           customer_id,
+           staff_id,
+           channel,
+           direction,
+           content,
+           outcome,
+           duration
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id, customer_id, staff_id, channel, direction, content, outcome, duration, created_at`,
+        [
+          customerId,
+          auth.viewer.id,
+          payload.channel || "call",
+          payload.direction || "outgoing",
+          payload.content,
+          payload.outcome || null,
+          payload.duration ? Number(payload.duration) : null,
+        ],
+      );
+      const createdInteraction = interactionResult.rows[0];
+
+      const analyzedInsight = analyzeInteraction(createdInteraction.content);
+      await client.query(
+        `INSERT INTO ai_insights (
+           interaction_id,
+           sentiment,
+           urgency,
+           category,
+           intent,
+           suggested_action
+         )
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          createdInteraction.id,
+          analyzedInsight.sentiment,
+          analyzedInsight.urgency,
+          analyzedInsight.category,
+          analyzedInsight.intent || null,
+          analyzedInsight.suggested_action,
+        ],
+      );
+
+      const newScore = computeLeadScore(createdInteraction.outcome, analyzedInsight.sentiment);
+      await client.query(
+        `UPDATE customers
+         SET lead_score = $1,
+             updated_at = NOW()
+         WHERE id = $2::uuid`,
+        [newScore, customerId],
+      );
+
+      let nextDueDate = null;
+      if (createdInteraction.outcome === "follow_up" || analyzedInsight.urgency === "high") {
+        nextDueDate = new Date();
+        nextDueDate.setDate(nextDueDate.getDate() + (analyzedInsight.urgency === "high" ? 1 : 2));
+
+        await client.query(
+          `UPDATE customers
+           SET next_action_date = $1,
+               next_action_note = $2,
+               updated_at = NOW()
+           WHERE id = $3::uuid`,
+          [nextDueDate.toISOString(), analyzedInsight.suggested_action, customerId],
+        );
+      }
+
+      return {
+        interaction: createdInteraction,
+        insight: analyzedInsight,
+        dueDate: nextDueDate,
+      };
+    }));
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: error.status || 500 });
+  }
+
+  if (dueDate) {
     try {
-      task = await createOpsTaskFromCrmInteraction(supabase, {
+      task = await createOpsTaskFromCrmInteraction({
         interaction,
         insight,
         dueDate,

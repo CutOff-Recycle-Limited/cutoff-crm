@@ -29,7 +29,7 @@ export function AdminDashboardPage() {
 
   useRealtimeRefresh("admin-dashboard", ["interactions", "tasks"], load);
 
-  if (!meta.configured) return <SetupBanner message="Add Supabase env vars to load the admin dashboard." />;
+  if (!meta.configured) return <SetupBanner message={meta.message || "Add CRM env vars to load the admin dashboard."} />;
   if (!meta.viewer) return <AuthRequired />;
   if (dashboard?.forbidden) return <EmptyPanel title="Admin access only" copy="This page is visible only to users whose role is admin." />;
   if (!dashboard) return <div className="card"><p className="subtle">Loading dashboard…</p></div>;

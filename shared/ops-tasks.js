@@ -1,3 +1,5 @@
+import { query } from "../lib/db/client";
+
 const CRM_LINKED_ENTITY_TYPES = ["customer", "interaction"];
 const CRM_STATUS_TO_OPS_CATEGORY = {
   pending: "todo",
@@ -52,19 +54,17 @@ function normalizePriority(value) {
   return priority;
 }
 
-function joinedStatus(row) {
-  const status = Array.isArray(row.statuses) ? row.statuses[0] : row.statuses;
-  return status || {};
-}
-
 function crmStatusForOpsTask(row) {
-  const category = joinedStatus(row).category;
-  return OPS_CATEGORY_TO_CRM_STATUS[category] || "pending";
+  return OPS_CATEGORY_TO_CRM_STATUS[row.status_category] || "pending";
 }
 
 function mapOpsTaskRow(row, customer = null) {
-  const linkedCustomerId = row.linked_entity_type === "customer" ? row.linked_entity_id : customer?.id || null;
-  const linkedInteractionId = row.linked_entity_type === "interaction" ? row.linked_entity_id : null;
+  const linkedCustomerId = row.linked_entity_type === "customer"
+    ? row.linked_entity_id
+    : customer?.id || null;
+  const linkedInteractionId = row.linked_entity_type === "interaction"
+    ? row.linked_entity_id
+    : null;
 
   return {
     id: row.id,
@@ -84,7 +84,7 @@ function mapOpsTaskRow(row, customer = null) {
   };
 }
 
-async function enrichCrmTaskRows(supabase, rows) {
+async function enrichCrmTaskRows(rows) {
   if (!rows.length) return [];
 
   const customerIds = new Set();
@@ -103,29 +103,31 @@ async function enrichCrmTaskRows(supabase, rows) {
   const customersByInteractionId = new Map();
 
   if (customerIds.size) {
-    const { data, error } = await supabase
-      .from("customers")
-      .select("id, name, phone")
-      .in("id", Array.from(customerIds));
-    if (error) throw new Error(error.message);
-    (data || []).forEach((customer) => customersById.set(customer.id, customer));
+    const result = await query(
+      `SELECT id, name, phone
+       FROM customers
+       WHERE id = ANY($1::uuid[])`,
+      [[...customerIds]],
+    );
+    result.rows.forEach((customer) => customersById.set(customer.id, customer));
   }
 
   if (interactionIds.size) {
-    const { data, error } = await supabase
-      .from("interactions")
-      .select("id, customer_id, customers ( id, name, phone )")
-      .in("id", Array.from(interactionIds));
-    if (error) throw new Error(error.message);
+    const result = await query(
+      `SELECT i.id AS interaction_id,
+              c.id,
+              c.name,
+              c.phone
+       FROM interactions i
+       JOIN customers c ON c.id = i.customer_id
+       WHERE i.id = ANY($1::uuid[])`,
+      [[...interactionIds]],
+    );
 
-    (data || []).forEach((interaction) => {
-      const customer = Array.isArray(interaction.customers)
-        ? interaction.customers[0]
-        : interaction.customers;
-      if (customer) {
-        customersByInteractionId.set(interaction.id, customer);
-        customersById.set(customer.id, customer);
-      }
+    result.rows.forEach((row) => {
+      const customer = { id: row.id, name: row.name, phone: row.phone };
+      customersByInteractionId.set(row.interaction_id, customer);
+      customersById.set(customer.id, customer);
     });
   }
 
@@ -137,40 +139,60 @@ async function enrichCrmTaskRows(supabase, rows) {
   });
 }
 
-export async function listCrmOpsTasks(supabase, options = {}) {
-  const { viewer = null, customerId = null, interactionIds = [] } = options;
+async function getCrmTaskRows(whereSql = "", params = []) {
+  const result = await query(
+    `SELECT t.id,
+            t.operation_id,
+            t.workflow_id,
+            t.status_id,
+            t.title,
+            t.description,
+            t.priority,
+            t.assignee_id,
+            t.reporter_id,
+            t.created_by_id,
+            t.due_date,
+            t.linked_entity_type,
+            t.linked_entity_id,
+            t.created_at,
+            s.category AS status_category,
+            s.name AS status_name
+     FROM tasks t
+     LEFT JOIN statuses s ON s.id = t.status_id
+     WHERE t.linked_entity_type = ANY($1::varchar[])
+       ${whereSql}
+     ORDER BY t.due_date ASC NULLS LAST, t.created_at DESC`,
+    [CRM_LINKED_ENTITY_TYPES, ...params],
+  );
 
-  let query = supabase
-    .from("tasks")
-    .select(`
-      id, operation_id, workflow_id, status_id, title, description, priority,
-      assignee_id, reporter_id, created_by_id, due_date,
-      linked_entity_type, linked_entity_id, created_at,
-      statuses ( category, name )
-    `)
-    .in("linked_entity_type", CRM_LINKED_ENTITY_TYPES)
-    .order("due_date", { ascending: true });
+  return result.rows;
+}
+
+export async function listCrmOpsTasks(options = {}) {
+  const { viewer = null, customerId = null, interactionIds = [] } = options;
+  const clauses = [];
+  const params = [];
 
   if (viewer && viewer.role !== "admin") {
-    query = query.eq("assignee_id", viewer.id);
+    params.push(viewer.id);
+    clauses.push(`AND t.assignee_id = $${params.length + 1}::uuid`);
   }
 
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  const rows = await getCrmTaskRows(clauses.join("\n"), params);
 
-  let rows = data || [];
+  let filteredRows = rows;
   if (customerId || interactionIds.length) {
     const interactionIdSet = new Set(interactionIds);
-    rows = rows.filter((row) => (
+    filteredRows = rows.filter((row) => (
       (customerId && row.linked_entity_type === "customer" && row.linked_entity_id === customerId)
       || (row.linked_entity_type === "interaction" && interactionIdSet.has(row.linked_entity_id))
     ));
   }
 
-  return enrichCrmTaskRows(supabase, rows);
+  return enrichCrmTaskRows(filteredRows);
 }
 
-async function getStatusIdForCrmStatus(supabase, status) {
+async function getStatusIdForCrmStatus(status) {
   const category = CRM_STATUS_TO_OPS_CATEGORY[status];
   if (!category) throw new Error("Unsupported task status.");
 
@@ -178,21 +200,21 @@ async function getStatusIdForCrmStatus(supabase, status) {
   if (status === "pending" && config.statusId) return config.statusId;
   if (!config.workflowId) throw new OpsTaskConfigError(["OPS_DEFAULT_WORKFLOW_ID"]);
 
-  const { data, error } = await supabase
-    .from("statuses")
-    .select("id")
-    .eq("workflow_id", config.workflowId)
-    .eq("category", category)
-    .order("position", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const result = await query(
+    `SELECT id
+     FROM statuses
+     WHERE workflow_id = $1
+       AND category = $2
+     ORDER BY position
+     LIMIT 1`,
+    [config.workflowId, category],
+  );
 
-  if (error) throw new Error(error.message);
-  if (!data?.id) throw new Error(`No Ops status found for CRM status ${status}.`);
-  return data.id;
+  if (!result.rows[0]?.id) throw new Error(`No Ops status found for CRM status ${status}.`);
+  return result.rows[0].id;
 }
 
-export async function createOpsTask(supabase, input) {
+export async function createOpsTask(input) {
   const config = assertOpsTaskConfig();
   const title = String(input.title || "").trim();
   if (!title) throw new Error("title is required.");
@@ -206,33 +228,41 @@ export async function createOpsTask(supabase, input) {
     throw new Error("linked entity is required.");
   }
 
-  const { data, error } = await supabase
-    .from("tasks")
-    .insert({
-      operation_id: config.operationId,
-      workflow_id: config.workflowId,
-      status_id: config.statusId,
+  const inserted = await query(
+    `INSERT INTO tasks (
+       operation_id,
+       workflow_id,
+       status_id,
+       title,
+       description,
+       priority,
+       assignee_id,
+       reporter_id,
+       created_by_id,
+       due_date,
+       linked_entity_type,
+       linked_entity_id,
+       type
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,'task')
+     RETURNING id`,
+    [
+      config.operationId,
+      config.workflowId,
+      config.statusId,
       title,
-      description: input.description || null,
+      input.description || null,
       priority,
-      assignee_id: assigneeId || null,
-      reporter_id: reporterId,
-      created_by_id: reporterId,
-      due_date: dueDate,
-      linked_entity_type: input.linkedEntityType,
-      linked_entity_id: input.linkedEntityId,
-      type: "task",
-    })
-    .select(`
-      id, operation_id, workflow_id, status_id, title, description, priority,
-      assignee_id, reporter_id, created_by_id, due_date,
-      linked_entity_type, linked_entity_id, created_at,
-      statuses ( category, name )
-    `)
-    .single();
+      assigneeId || null,
+      reporterId,
+      dueDate,
+      input.linkedEntityType,
+      input.linkedEntityId,
+    ],
+  );
 
-  if (error) throw new Error(error.message);
-  const [task] = await enrichCrmTaskRows(supabase, [data]);
+  const rows = await getCrmTaskRows("AND t.id = $2::uuid", [inserted.rows[0].id]);
+  const [task] = await enrichCrmTaskRows(rows);
   return task;
 }
 
@@ -240,8 +270,8 @@ export function isOpsTaskConfigError(error) {
   return error instanceof OpsTaskConfigError || error?.name === "OpsTaskConfigError";
 }
 
-export async function createOpsTaskFromCrmInteraction(supabase, { interaction, insight, dueDate, viewer }) {
-  return createOpsTask(supabase, {
+export async function createOpsTaskFromCrmInteraction({ interaction, insight, dueDate, viewer }) {
+  return createOpsTask({
     title: insight.suggested_action,
     description: `Follow-up from ${interaction.channel} interaction.`,
     dueDate,
@@ -253,8 +283,8 @@ export async function createOpsTaskFromCrmInteraction(supabase, { interaction, i
   });
 }
 
-export async function createOpsTaskFromCustomer(supabase, input) {
-  return createOpsTask(supabase, {
+export async function createOpsTaskFromCustomer(input) {
+  return createOpsTask({
     title: input.title,
     description: input.description,
     dueDate: input.dueDate,
@@ -266,51 +296,56 @@ export async function createOpsTaskFromCustomer(supabase, input) {
   });
 }
 
-export async function updateCrmOpsTask(supabase, id, payload, viewer) {
-  const { data: existing, error: existingError } = await supabase
-    .from("tasks")
-    .select("id, assignee_id, linked_entity_type, linked_entity_id")
-    .eq("id", id)
-    .maybeSingle();
+export async function updateCrmOpsTask(id, payload, viewer) {
+  const existing = await query(
+    `SELECT id, assignee_id, linked_entity_type, linked_entity_id
+     FROM tasks
+     WHERE id = $1`,
+    [id],
+  );
+  const task = existing.rows[0];
 
-  if (existingError) throw new Error(existingError.message);
-  if (!existing || !CRM_LINKED_ENTITY_TYPES.includes(existing.linked_entity_type)) {
+  if (!task || !CRM_LINKED_ENTITY_TYPES.includes(task.linked_entity_type)) {
     const error = new Error("Task not found.");
     error.status = 404;
     throw error;
   }
 
-  if (viewer.role !== "admin" && existing.assignee_id !== viewer.id) {
+  if (viewer.role !== "admin" && task.assignee_id !== viewer.id) {
     const error = new Error("Forbidden");
     error.status = 403;
     throw error;
   }
 
-  const updates = {};
-  if (payload.priority !== undefined) updates.priority = normalizePriority(payload.priority);
-  if (payload.status !== undefined) {
-    updates.status_id = await getStatusIdForCrmStatus(supabase, payload.status);
+  const updates = [];
+  const params = [];
+
+  if (payload.priority !== undefined) {
+    params.push(normalizePriority(payload.priority));
+    updates.push(`priority = $${params.length}`);
   }
 
-  if (!Object.keys(updates).length) {
+  if (payload.status !== undefined) {
+    params.push(await getStatusIdForCrmStatus(payload.status));
+    updates.push(`status_id = $${params.length}::uuid`);
+  }
+
+  if (!updates.length) {
     const error = new Error("No valid fields to update.");
     error.status = 400;
     throw error;
   }
 
-  const { data, error } = await supabase
-    .from("tasks")
-    .update(updates)
-    .eq("id", id)
-    .select(`
-      id, operation_id, workflow_id, status_id, title, description, priority,
-      assignee_id, reporter_id, created_by_id, due_date,
-      linked_entity_type, linked_entity_id, created_at,
-      statuses ( category, name )
-    `)
-    .single();
+  params.push(id);
+  await query(
+    `UPDATE tasks
+     SET ${updates.join(", ")},
+         updated_at = NOW()
+     WHERE id = $${params.length}::uuid`,
+    params,
+  );
 
-  if (error) throw new Error(error.message);
-  const [task] = await enrichCrmTaskRows(supabase, [data]);
-  return task;
+  const rows = await getCrmTaskRows("AND t.id = $2::uuid", [id]);
+  const [updated] = await enrichCrmTaskRows(rows);
+  return updated;
 }

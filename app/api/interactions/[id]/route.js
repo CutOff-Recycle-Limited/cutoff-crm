@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "../../../../lib/auth";
-import { createSupabaseServerClient } from "../../../../lib/supabase/server";
+import { query } from "../../../../lib/db/client";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 
 export async function PATCH(request, { params }) {
@@ -14,7 +14,6 @@ export async function PATCH(request, { params }) {
   }
 
   const payload  = await request.json();
-  const supabase = createSupabaseServerClient();
   const { id }   = params;
 
   const allowed = ["channel", "direction", "content", "outcome", "duration"];
@@ -26,15 +25,28 @@ export async function PATCH(request, { params }) {
     return NextResponse.json({ error: "No valid fields to update." }, { status: 400 });
   }
 
-  const { data, error } = await supabase
-    .from("interactions")
-    .update(updates)
-    .eq("id", id)
-    .select("*")
-    .single();
+  const columns = Object.keys(updates);
+  const values = Object.values(updates);
+  const sets = columns.map((column, index) => `${column} = $${index + 1}`);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data });
+  try {
+    const result = await query(
+      `UPDATE interactions
+       SET ${sets.join(", ")},
+           updated_at = NOW()
+       WHERE id = $${values.length + 1}::uuid
+       RETURNING *`,
+      [...values, id],
+    );
+
+    if (!result.rows[0]) {
+      return NextResponse.json({ error: "Interaction not found." }, { status: 404 });
+    }
+
+    return NextResponse.json({ data: result.rows[0] });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }
 
 export async function DELETE(request, { params }) {
@@ -47,10 +59,12 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
 
-  const supabase = createSupabaseServerClient();
   const { id }   = params;
 
-  const { error } = await supabase.from("interactions").delete().eq("id", id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ success: true });
+  try {
+    await query("DELETE FROM interactions WHERE id = $1::uuid", [id]);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

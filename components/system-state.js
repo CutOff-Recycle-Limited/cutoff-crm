@@ -8,7 +8,7 @@ export function SetupBanner({ message }) {
       <div className="section-head">
         <div>
           <p className="eyebrow">Setup</p>
-          <h1>Finish Supabase setup</h1>
+          <h1>Finish app setup</h1>
           <p className="subtle">{message}</p>
         </div>
         <Link className="ghost-btn" href="/setup">Open setup guide</Link>
@@ -18,17 +18,18 @@ export function SetupBanner({ message }) {
         <div className="info-block">
           <span>Environment variables</span>
           <div className="code-list">
-            <code>NEXT_PUBLIC_SUPABASE_URL</code>
-            <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
+            <code>NEXT_PUBLIC_AUTH_SUPABASE_URL</code>
+            <code>NEXT_PUBLIC_AUTH_SUPABASE_ANON_KEY</code>
+            <code>DATABASE_URL</code>
           </div>
         </div>
 
         <div className="info-block">
           <span>Next steps</span>
           <ol className="simple-list">
-            <li>Add the two env vars in Vercel.</li>
-            <li>Apply <code>supabase/schema-v2.sql</code> in Supabase.</li>
-            <li>Create a user in Supabase Auth and sign in.</li>
+            <li>Add the auth and database env vars in Vercel.</li>
+            <li>Apply the shared Neon/Postgres schema.</li>
+            <li>Create or map a Supabase Auth user to shared <code>users</code>.</li>
           </ol>
         </div>
       </div>

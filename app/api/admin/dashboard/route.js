@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "../../../../lib/auth";
 import { buildDashboardPayload } from "../../../../lib/dashboard-data";
-import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 
 export async function GET() {
@@ -17,9 +16,8 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const supabase = createSupabaseServerClient();
   try {
-    const payload = await buildDashboardPayload(supabase);
+    const payload = await buildDashboardPayload();
     return NextResponse.json({
       data: {
         callsToday: payload.interactionsToday,

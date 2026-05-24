@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSharedViewer, requireViewer } from "../../../lib/auth";
 import { createOpsTaskFromCustomer, isOpsTaskConfigError, listCrmOpsTasks } from "../../../shared/ops-tasks";
-import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../lib/supabase/config";
 
 export async function GET() {
@@ -14,9 +13,8 @@ export async function GET() {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
 
-  const supabase = createSupabaseServerClient();
   try {
-    const data = await listCrmOpsTasks(supabase, { viewer: auth.viewer });
+    const data = await listCrmOpsTasks({ viewer: auth.viewer });
     return NextResponse.json({ data });
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -34,10 +32,9 @@ export async function POST(request) {
   }
 
   const payload  = await request.json();
-  const supabase = createSupabaseServerClient();
 
   try {
-    const data = await createOpsTaskFromCustomer(supabase, {
+    const data = await createOpsTaskFromCustomer({
       customerId: payload.customer_id,
       interactionId: payload.interaction_id || null,
       assigneeId: payload.assigned_to || auth.viewer.id,

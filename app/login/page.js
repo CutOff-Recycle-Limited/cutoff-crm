@@ -40,7 +40,7 @@ export default function LoginPage() {
         <p className="eyebrow">Setup required</p>
         <h1 style={{ margin: "0.25rem 0 0.5rem" }}>Supabase not configured</h1>
         <p className="subtle">
-          Add <code>NEXT_PUBLIC_SUPABASE_URL</code> and <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to your environment variables.
+          Add <code>NEXT_PUBLIC_AUTH_SUPABASE_URL</code> and <code>NEXT_PUBLIC_AUTH_SUPABASE_ANON_KEY</code> to your environment variables.
         </p>
       </div>
     );

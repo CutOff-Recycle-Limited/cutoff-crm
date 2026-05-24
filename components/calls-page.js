@@ -65,7 +65,7 @@ export function CallsPage() {
 
   useRealtimeRefresh("calls-list", ["interactions"], load);
 
-  if (!meta.configured) return <SetupBanner message="Add Supabase env vars to load calls from the database." />;
+  if (!meta.configured) return <SetupBanner message={meta.message || "Add CRM env vars to load calls from the database."} />;
   if (!meta.viewer) return <AuthRequired />;
   if (!calls.length) return <EmptyPanel title="No calls logged yet" copy="Start by logging your first call from the interactions page." />;
 

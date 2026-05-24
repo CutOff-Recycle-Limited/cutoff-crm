@@ -3,21 +3,27 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 import { getViewer } from "../../../../lib/auth";
 import { buildDashboardPayload } from "../../../../lib/dashboard-data";
-import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
+import { isDatabaseConfigured } from "../../../../lib/db/client";
 
 /**
  * Single round-trip for the dashboard page: viewer + admin payload.
  * Avoids duplicate getViewer() work from separate /api/me + /api/dashboard calls.
  */
 export async function GET() {
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseConfigured || !isDatabaseConfigured) {
+    const missing = [
+      !isDatabaseConfigured ? "DATABASE_URL" : null,
+      !isSupabaseConfigured ? "NEXT_PUBLIC_AUTH_SUPABASE_URL" : null,
+      !isSupabaseConfigured ? "NEXT_PUBLIC_AUTH_SUPABASE_ANON_KEY" : null,
+    ].filter(Boolean);
+
     return NextResponse.json({
       configured: false,
       viewer: null,
       dashboard: null,
       forbidden: false,
-      message: "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+      message: `Set ${missing.join(", ")}.`,
     });
   }
 
@@ -40,8 +46,7 @@ export async function GET() {
     });
   }
 
-  const supabase = createSupabaseServerClient();
-  const dashboard = await buildDashboardPayload(supabase);
+  const dashboard = await buildDashboardPayload();
 
   return NextResponse.json({
     configured: true,

@@ -39,7 +39,7 @@ export function TasksPage() {
     load();
   }
 
-  if (!meta.configured) return <SetupBanner message="Add Supabase env vars to load tasks from the database." />;
+  if (!meta.configured) return <SetupBanner message={meta.message || "Add CRM env vars to load tasks from the database."} />;
   if (!meta.viewer) return <AuthRequired />;
   if (!tasks.length) return <EmptyPanel title="No tasks yet" copy="Tasks will appear here once follow-up interactions are logged." />;
 

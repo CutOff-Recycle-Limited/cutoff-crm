@@ -65,7 +65,7 @@ export function CallLogPage() {
   }
 
   if (!meta.configured) {
-    return <SetupBanner message="Add your Supabase URL and anon key to run the native Next.js app." />;
+    return <SetupBanner message={meta.message || "Add CRM auth and database env vars to run the app."} />;
   }
 
   if (!meta.viewer) {
@@ -73,7 +73,7 @@ export function CallLogPage() {
   }
 
   if (!customers.length) {
-    return <EmptyPanel title="No customers yet" copy="Create or import customers in Supabase before logging calls." />;
+    return <EmptyPanel title="No customers yet" copy="Create or import customers in the shared database before logging calls." />;
   }
 
   return (

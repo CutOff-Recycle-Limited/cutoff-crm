@@ -6,7 +6,7 @@ Next.js CRM for customer interactions, AI insights, and follow-up work linked in
 
 - Next.js App Router
 - Supabase Auth client compatibility at the app boundary
-- Shared PostgreSQL tables for CRM data
+- Neon/Postgres via `DATABASE_URL` for CRM application data
 - Native route handlers under `app/api`
 
 ## Setup
@@ -17,17 +17,22 @@ Next.js CRM for customer interactions, AI insights, and follow-up work linked in
 npm install
 ```
 
-2. Add environment variables
+2. Add Vercel environment variables
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+DATABASE_URL=...
+NEXT_PUBLIC_AUTH_SUPABASE_URL=...
+NEXT_PUBLIC_AUTH_SUPABASE_ANON_KEY=...
 OPS_DEFAULT_OPERATION_ID=...
 OPS_DEFAULT_WORKFLOW_ID=...
 OPS_DEFAULT_STATUS_ID=...
 ```
 
-3. Apply the shared CRM schema in [supabase/schema.sql](./supabase/schema.sql) after the Ops schema exists.
+Supabase is currently used for authentication/session handling only. Neon/Postgres is the application database for `customers`, `interactions`, `ai_insights`, and CRM-linked Ops `tasks`. Do not create CRM data tables in Supabase.
+
+`SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_JWT_SECRET` are not read by the CRM code.
+
+3. Apply the shared Neon/Postgres schema after the Ops schema exists.
 
 4. Start the app
 
@@ -58,6 +63,6 @@ npm run dev
 ## Notes
 
 - CRM role is read from `user_platform_roles` with `platform = 'crm'`.
-- If no CRM role exists, Ops admins are treated as CRM admins and other users default to `staff`.
+- If no CRM role exists, the user defaults to `staff`; admin routes require a CRM role of `admin`.
 - Follow-up tasks are created in the Ops `tasks` table through `shared/ops-tasks.js`.
 - Authenticated accounts must map to a shared `users` row before writing staff-owned CRM records.

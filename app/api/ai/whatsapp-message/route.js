@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "../../../../lib/auth";
-import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 import { generateWhatsAppMessage } from "../../../../lib/ai";
+import { getCustomer, listInteractions } from "../../../../lib/db/crm-data";
 
 export async function POST(request) {
   if (!isSupabaseConfigured) {
@@ -19,17 +19,10 @@ export async function POST(request) {
     return NextResponse.json({ error: "customer_id is required." }, { status: 400 });
   }
 
-  const supabase = createSupabaseServerClient();
-
   // Fetch customer + last interaction + its insight
-  const [{ data: customer }, { data: interactions }] = await Promise.all([
-    supabase.from("customers").select("*").eq("id", customer_id).single(),
-    supabase
-      .from("interactions")
-      .select("*, ai_insights(sentiment, urgency, category, intent, suggested_action)")
-      .eq("customer_id", customer_id)
-      .order("created_at", { ascending: false })
-      .limit(1),
+  const [customer, interactions] = await Promise.all([
+    getCustomer(customer_id),
+    listInteractions({ customerId: customer_id, limit: 1 }),
   ]);
 
   if (!customer) {

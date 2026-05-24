@@ -1,28 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { createSupabaseBrowserClient } from "../lib/supabase/client";
-import { isSupabaseConfigured } from "../lib/supabase/config";
 
 export function useRealtimeRefresh(channelName, tables, onChange) {
   useEffect(() => {
-    if (!isSupabaseConfigured || typeof onChange !== "function") return undefined;
+    if (typeof onChange !== "function") return undefined;
 
-    const supabase = createSupabaseBrowserClient();
-    const channel = supabase.channel(channelName);
+    const refreshIntervalMs = 30000;
+    const interval = window.setInterval(() => onChange(), refreshIntervalMs);
 
-    tables.forEach((table) => {
-      channel.on(
-        "postgres_changes",
-        { event: "*", schema: "public", table },
-        () => onChange(),
-      );
-    });
-
-    channel.subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => window.clearInterval(interval);
   }, [channelName, tables, onChange]);
 }

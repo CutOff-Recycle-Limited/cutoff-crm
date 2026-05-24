@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSharedViewer } from "../../../../lib/auth";
 import { isOpsTaskConfigError, updateCrmOpsTask } from "../../../../shared/ops-tasks";
-import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 
 export async function PATCH(request, { params }) {
@@ -15,11 +14,10 @@ export async function PATCH(request, { params }) {
   }
 
   const payload  = await request.json();
-  const supabase = createSupabaseServerClient();
   const { id }   = params;
 
   try {
-    const data = await updateCrmOpsTask(supabase, id, payload, auth.viewer);
+    const data = await updateCrmOpsTask(id, payload, auth.viewer);
     return NextResponse.json({ data });
   } catch (error) {
     const status = error.status || (isOpsTaskConfigError(error) ? 500 : 500);
