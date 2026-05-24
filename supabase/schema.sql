@@ -1,56 +1,71 @@
-create extension if not exists pgcrypto;
+-- CutOff CRM shared Neon/PostgreSQL schema.
+-- CRM owns only customers, interactions, and ai_insights.
+-- Ops owns users and canonical tasks.
 
-create table if not exists public.customers (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  phone text,
-  region text,
-  source text,
-  created_at timestamptz not null default now()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE IF NOT EXISTS public.customers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  phone TEXT,
+  region TEXT,
+  type TEXT NOT NULL DEFAULT 'lead'
+    CHECK (type IN ('farmer', 'distributor', 'lead')),
+  source TEXT,
+  lead_score TEXT NOT NULL DEFAULT 'cold'
+    CHECK (lead_score IN ('hot', 'warm', 'cold')),
+  next_action_date TIMESTAMPTZ,
+  next_action_note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-create table if not exists public.calls (
-  id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references public.customers(id) on delete cascade,
-  staff_id uuid not null,
-  type text not null check (type in ('incoming', 'outgoing')),
-  purpose text not null check (purpose in ('inquiry', 'complaint', 'order', 'follow-up')),
-  summary text not null,
-  outcome text not null check (outcome in ('interested', 'not_interested', 'follow_up', 'closed')),
-  duration integer,
-  created_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS public.interactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID NOT NULL REFERENCES public.customers(id) ON DELETE CASCADE,
+  staff_id UUID NOT NULL REFERENCES public.users(id),
+  channel TEXT NOT NULL DEFAULT 'call'
+    CHECK (channel IN ('call', 'whatsapp', 'sms', 'in_person', 'email')),
+  direction TEXT NOT NULL DEFAULT 'outgoing'
+    CHECK (direction IN ('incoming', 'outgoing')),
+  content TEXT NOT NULL,
+  outcome TEXT CHECK (outcome IN ('interested', 'not_interested', 'follow_up', 'closed')),
+  duration INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-create table if not exists public.tasks (
-  id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references public.customers(id) on delete cascade,
-  related_call_id uuid references public.calls(id) on delete set null,
-  assigned_to uuid not null,
-  task text not null,
-  due_date timestamptz not null,
-  status text not null default 'pending' check (status in ('pending', 'completed')),
-  created_at timestamptz not null default now()
+CREATE TABLE IF NOT EXISTS public.ai_insights (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  interaction_id UUID NOT NULL UNIQUE REFERENCES public.interactions(id) ON DELETE CASCADE,
+  sentiment TEXT NOT NULL CHECK (sentiment IN ('positive', 'neutral', 'negative')),
+  urgency TEXT NOT NULL CHECK (urgency IN ('low', 'medium', 'high')),
+  category TEXT NOT NULL CHECK (category IN ('sales', 'support', 'logistics', 'partnership')),
+  intent TEXT,
+  suggested_action TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-create table if not exists public.ai_insights (
-  id uuid primary key default gen_random_uuid(),
-  call_id uuid not null unique references public.calls(id) on delete cascade,
-  sentiment text not null check (sentiment in ('positive', 'neutral', 'negative')),
-  urgency text not null check (urgency in ('low', 'medium', 'high')),
-  category text not null check (category in ('sales', 'support', 'logistics', 'partnership')),
-  suggested_action text not null
-);
+CREATE INDEX IF NOT EXISTS idx_customers_lead_score
+  ON public.customers(lead_score);
 
-create index if not exists calls_customer_id_idx on public.calls(customer_id);
-create index if not exists calls_staff_id_idx on public.calls(staff_id);
-create index if not exists tasks_customer_id_idx on public.tasks(customer_id);
-create index if not exists tasks_assigned_to_idx on public.tasks(assigned_to);
-create index if not exists tasks_status_idx on public.tasks(status);
-create index if not exists ai_insights_urgency_idx on public.ai_insights(urgency);
+CREATE INDEX IF NOT EXISTS idx_customers_next_action
+  ON public.customers(next_action_date);
 
-alter publication supabase_realtime add table public.calls;
-alter publication supabase_realtime add table public.tasks;
+CREATE INDEX IF NOT EXISTS idx_customers_phone
+  ON public.customers(phone);
 
--- Example RLS shape for future auth wiring:
--- Admin can read everything. Staff can create calls and read/update only their own tasks.
--- Implement policy conditions against auth.uid() once staff_id / assigned_to maps to auth users.
+CREATE INDEX IF NOT EXISTS idx_interactions_customer_id
+  ON public.interactions(customer_id);
+
+CREATE INDEX IF NOT EXISTS idx_interactions_staff_id
+  ON public.interactions(staff_id);
+
+CREATE INDEX IF NOT EXISTS idx_interactions_created_at
+  ON public.interactions(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_insights_urgency
+  ON public.ai_insights(urgency);
+
+CREATE INDEX IF NOT EXISTS idx_ai_insights_category
+  ON public.ai_insights(category);

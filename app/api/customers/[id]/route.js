@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "../../../../lib/auth";
+import { listCrmOpsTasks } from "../../../../shared/ops-tasks";
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 
@@ -16,7 +17,7 @@ export async function GET(request, { params }) {
   const supabase = createSupabaseServerClient();
   const { id }   = params;
 
-  const [{ data: customer }, { data: interactions }, { data: tasks }] = await Promise.all([
+  const [{ data: customer }, { data: interactions }] = await Promise.all([
     supabase.from("customers").select("*").eq("id", id).single(),
     supabase
       .from("interactions")
@@ -26,19 +27,20 @@ export async function GET(request, { params }) {
       `)
       .eq("customer_id", id)
       .order("created_at", { ascending: false }),
-    supabase
-      .from("tasks")
-      .select("id, title, description, status, priority, due_date, assigned_to, created_at")
-      .eq("customer_id", id)
-      .order("due_date", { ascending: true }),
   ]);
 
   if (!customer) {
     return NextResponse.json({ error: "Customer not found." }, { status: 404 });
   }
 
+  const tasks = await listCrmOpsTasks(supabase, {
+    viewer: auth.viewer,
+    customerId: id,
+    interactionIds: (interactions || []).map((interaction) => interaction.id),
+  });
+
   return NextResponse.json({
-    data: { customer, interactions: interactions || [], tasks: tasks || [] },
+    data: { customer, interactions: interactions || [], tasks },
   });
 }
 

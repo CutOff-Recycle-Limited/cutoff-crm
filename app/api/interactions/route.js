@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { analyzeInteraction, computeLeadScore } from "../../../lib/ai";
-import { requireViewer } from "../../../lib/auth";
+import { requireSharedViewer, requireViewer } from "../../../lib/auth";
+import { createOpsTaskFromCrmInteraction, isOpsTaskConfigError } from "../../../shared/ops-tasks";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../lib/supabase/config";
 
@@ -9,7 +10,7 @@ export async function GET() {
     return NextResponse.json({ error: "Supabase not configured." }, { status: 500 });
   }
 
-  const auth = await requireViewer();
+  const auth = await requireSharedViewer();
   if (auth.error) {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
@@ -111,6 +112,7 @@ export async function POST(request) {
 
   // Auto-create task on follow_up outcome or high urgency
   let task = null;
+  let taskWarning = null;
   if (interaction.outcome === "follow_up" || insight.urgency === "high") {
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + (insight.urgency === "high" ? 1 : 2));
@@ -121,23 +123,21 @@ export async function POST(request) {
       .update({ next_action_date: dueDate.toISOString(), next_action_note: insight.suggested_action })
       .eq("id", customerId);
 
-    const { data: createdTask, error: taskError } = await supabase
-      .from("tasks")
-      .insert({
-        customer_id:    interaction.customer_id,
-        interaction_id: interaction.id,
-        assigned_to:    auth.viewer.id,
-        title:          insight.suggested_action,
-        description:    `Follow-up from ${interaction.channel} interaction.`,
-        due_date:       dueDate.toISOString(),
-        status:         "pending",
-        priority:       insight.urgency,
-      })
-      .select("*")
-      .single();
-
-    if (!taskError) task = createdTask;
+    try {
+      task = await createOpsTaskFromCrmInteraction(supabase, {
+        interaction,
+        insight,
+        dueDate,
+        viewer: auth.viewer,
+      });
+    } catch (error) {
+      if (isOpsTaskConfigError(error)) {
+        taskWarning = error.message;
+      } else {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+    }
   }
 
-  return NextResponse.json({ data: { interaction, insight, task } }, { status: 201 });
+  return NextResponse.json({ data: { interaction, insight, task, taskWarning } }, { status: 201 });
 }

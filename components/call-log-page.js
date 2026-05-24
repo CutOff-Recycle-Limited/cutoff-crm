@@ -149,9 +149,9 @@ export function CallLogPage() {
         <p className="eyebrow">Flow</p>
         <h2>What happens next</h2>
         <ul className="simple-list">
-          <li>Call is inserted into `calls`.</li>
+          <li>Call is inserted as an interaction.</li>
           <li>Keyword-based AI insight is written to `ai_insights`.</li>
-          <li>Follow-up outcomes auto-create a task.</li>
+          <li>Follow-up outcomes auto-create an Ops task when defaults are configured.</li>
         </ul>
       </aside>
     </div>

@@ -1,8 +1,25 @@
 import { NextResponse } from "next/server";
 import { analyzeCall } from "../../../lib/call-intelligence";
-import { requireViewer } from "../../../lib/auth";
+import { requireSharedViewer, requireViewer } from "../../../lib/auth";
+import { createOpsTaskFromCrmInteraction, isOpsTaskConfigError } from "../../../shared/ops-tasks";
 import { createSupabaseServerClient } from "../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../lib/supabase/config";
+
+function mapInteractionToCall(interaction) {
+  return {
+    id: interaction.id,
+    customer_id: interaction.customer_id,
+    staff_id: interaction.staff_id,
+    type: interaction.direction,
+    purpose: interaction.outcome === "follow_up" ? "follow-up" : "inquiry",
+    summary: interaction.content,
+    outcome: interaction.outcome,
+    duration: interaction.duration,
+    created_at: interaction.created_at,
+    customers: interaction.customers,
+    ai_insights: interaction.ai_insights,
+  };
+}
 
 export async function GET() {
   if (!isSupabaseConfigured) {
@@ -16,20 +33,20 @@ export async function GET() {
 
   const supabase = createSupabaseServerClient();
   let query = supabase
-    .from("calls")
+    .from("interactions")
     .select(`
       id,
       customer_id,
       staff_id,
-      type,
-      purpose,
-      summary,
+      direction,
+      content,
       outcome,
       duration,
       created_at,
       customers ( id, name, phone ),
       ai_insights ( sentiment, urgency, category, suggested_action )
     `)
+    .eq("channel", "call")
     .order("created_at", { ascending: false });
 
   if (auth.viewer.role !== "admin") {
@@ -42,7 +59,7 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ data: data || [] });
+  return NextResponse.json({ data: (data || []).map(mapInteractionToCall) });
 }
 
 export async function POST(request) {
@@ -50,7 +67,7 @@ export async function POST(request) {
     return NextResponse.json({ error: "Supabase env is not configured." }, { status: 500 });
   }
 
-  const auth = await requireViewer();
+  const auth = await requireSharedViewer();
   if (auth.error) {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
@@ -83,29 +100,29 @@ export async function POST(request) {
     return NextResponse.json({ error: "customer_id or customer_name is required." }, { status: 400 });
   }
 
-  const callPayload = {
+  const interactionPayload = {
     customer_id: customerId,
     staff_id: auth.viewer.id,
-    type: payload.type,
-    purpose: payload.purpose,
-    summary: payload.summary,
+    channel: "call",
+    direction: payload.type || "outgoing",
+    content: payload.summary,
     outcome: payload.outcome,
     duration: payload.duration ? Number(payload.duration) : null,
   };
 
-  const { data: call, error: callError } = await supabase
-    .from("calls")
-    .insert(callPayload)
-    .select("id,customer_id,staff_id,type,purpose,summary,outcome,duration,created_at")
+  const { data: interaction, error: interactionError } = await supabase
+    .from("interactions")
+    .insert(interactionPayload)
+    .select("id, customer_id, staff_id, channel, direction, content, outcome, duration, created_at")
     .single();
 
-  if (callError) {
-    return NextResponse.json({ error: callError.message }, { status: 500 });
+  if (interactionError) {
+    return NextResponse.json({ error: interactionError.message }, { status: 500 });
   }
 
   const insightPayload = {
-    call_id: call.id,
-    ...analyzeCall(call.summary),
+    interaction_id: interaction.id,
+    ...analyzeCall(interaction.content),
   };
 
   const { error: insightError } = await supabase.from("ai_insights").insert(insightPayload);
@@ -114,31 +131,28 @@ export async function POST(request) {
   }
 
   let task = null;
-  if (call.outcome === "follow_up") {
+  let taskWarning = null;
+  if (interaction.outcome === "follow_up") {
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + (insightPayload.urgency === "high" ? 1 : 2));
 
-    const taskPayload = {
-      customer_id: call.customer_id,
-      related_call_id: call.id,
-      assigned_to: auth.viewer.id,
-      task: insightPayload.suggested_action,
-      due_date: dueDate.toISOString(),
-      status: "pending",
-    };
-
-    const { data: createdTask, error: taskError } = await supabase
-      .from("tasks")
-      .insert(taskPayload)
-      .select("*")
-      .single();
-
-    if (taskError) {
-      return NextResponse.json({ error: taskError.message }, { status: 500 });
+    try {
+      task = await createOpsTaskFromCrmInteraction(supabase, {
+        interaction,
+        insight: insightPayload,
+        dueDate,
+        viewer: auth.viewer,
+      });
+    } catch (error) {
+      if (isOpsTaskConfigError(error)) {
+        taskWarning = error.message;
+      } else {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
-
-    task = createdTask;
   }
 
-  return NextResponse.json({ data: { call, insight: insightPayload, task } }, { status: 201 });
+  return NextResponse.json({
+    data: { call: mapInteractionToCall(interaction), insight: insightPayload, task, taskWarning },
+  }, { status: 201 });
 }

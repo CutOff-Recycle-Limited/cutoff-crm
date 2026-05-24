@@ -27,7 +27,7 @@ export function AdminDashboardPage() {
     load();
   }, [load]);
 
-  useRealtimeRefresh("admin-dashboard", ["calls", "tasks"], load);
+  useRealtimeRefresh("admin-dashboard", ["interactions", "tasks"], load);
 
   if (!meta.configured) return <SetupBanner message="Add Supabase env vars to load the admin dashboard." />;
   if (!meta.viewer) return <AuthRequired />;
@@ -71,7 +71,7 @@ export function AdminDashboardPage() {
           </div>
           <div className="stack">
             {(dashboard.alerts || []).map((alert, index) => (
-              <div className="list-card danger-border" key={`${alert.call_id}-${index}`}>
+              <div className="list-card danger-border" key={`${alert.interaction_id || alert.id}-${index}`}>
                 <div className="chip-row">
                   <span className={`pill ${alert.urgency === "high" ? "danger" : ""}`}>{alert.urgency}</span>
                   <span className={`pill ${alert.sentiment === "negative" ? "danger" : ""}`}>{alert.sentiment}</span>

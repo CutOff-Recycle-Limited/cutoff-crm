@@ -63,11 +63,11 @@ export function CallsPage() {
     load();
   }, [load]);
 
-  useRealtimeRefresh("calls-list", ["calls"], load);
+  useRealtimeRefresh("calls-list", ["interactions"], load);
 
   if (!meta.configured) return <SetupBanner message="Add Supabase env vars to load calls from the database." />;
   if (!meta.viewer) return <AuthRequired />;
-  if (!calls.length) return <EmptyPanel title="No calls logged yet" copy="Start by logging your first call on /calls/new." />;
+  if (!calls.length) return <EmptyPanel title="No calls logged yet" copy="Start by logging your first call from the interactions page." />;
 
   return (
     <>

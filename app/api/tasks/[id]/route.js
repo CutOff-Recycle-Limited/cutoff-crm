@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireViewer } from "../../../../lib/auth";
+import { requireSharedViewer } from "../../../../lib/auth";
+import { isOpsTaskConfigError, updateCrmOpsTask } from "../../../../shared/ops-tasks";
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 
@@ -8,7 +9,7 @@ export async function PATCH(request, { params }) {
     return NextResponse.json({ error: "Supabase not configured." }, { status: 500 });
   }
 
-  const auth = await requireViewer();
+  const auth = await requireSharedViewer();
   if (auth.error) {
     return NextResponse.json({ error: auth.error.message }, { status: auth.error.status });
   }
@@ -17,32 +18,11 @@ export async function PATCH(request, { params }) {
   const supabase = createSupabaseServerClient();
   const { id }   = params;
 
-  // Non-admins can only update their own tasks
-  if (auth.viewer.role !== "admin") {
-    const { data: task, error: fetchError } = await supabase
-      .from("tasks")
-      .select("id, assigned_to")
-      .eq("id", id)
-      .single();
-
-    if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
-    if (task.assigned_to !== auth.viewer.id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  try {
+    const data = await updateCrmOpsTask(supabase, id, payload, auth.viewer);
+    return NextResponse.json({ data });
+  } catch (error) {
+    const status = error.status || (isOpsTaskConfigError(error) ? 500 : 500);
+    return NextResponse.json({ error: error.message }, { status });
   }
-
-  // Allow updating status and/or priority
-  const updates = {};
-  if (payload.status   !== undefined) updates.status   = payload.status;
-  if (payload.priority !== undefined) updates.priority = payload.priority;
-
-  const { data, error } = await supabase
-    .from("tasks")
-    .update(updates)
-    .eq("id", id)
-    .select("*")
-    .single();
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ data });
 }

@@ -41,7 +41,7 @@ export function TasksPage() {
 
   if (!meta.configured) return <SetupBanner message="Add Supabase env vars to load tasks from the database." />;
   if (!meta.viewer) return <AuthRequired />;
-  if (!tasks.length) return <EmptyPanel title="No tasks yet" copy="Tasks will appear here once follow-up calls are logged." />;
+  if (!tasks.length) return <EmptyPanel title="No tasks yet" copy="Tasks will appear here once follow-up interactions are logged." />;
 
   const filtered = tasks.filter((task) => statusFilter === "all" || task.status === statusFilter);
 
@@ -64,7 +64,7 @@ export function TasksPage() {
         {filtered.map((task) => (
           <div className={`list-card ${overdue(task) ? "danger-border" : ""}`} key={task.id}>
             <div>
-              <h3>{task.task}</h3>
+              <h3>{task.title}</h3>
               <p className="subtle">
                 {task.customers?.name || "Unknown customer"} · Due {new Date(task.due_date).toLocaleString()}
               </p>

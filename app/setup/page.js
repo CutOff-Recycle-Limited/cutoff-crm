@@ -56,7 +56,7 @@ export default function SetupPage() {
         <h2>Useful pages</h2>
         <div className="stack">
           <Link className="ghost-btn" href="/sign-in">Open sign in</Link>
-          <Link className="ghost-btn" href="/calls/new">Go to call log</Link>
+          <Link className="ghost-btn" href="/interactions/new">Go to interaction log</Link>
           <Link className="ghost-btn" href="/admin">Open admin</Link>
         </div>
       </aside>

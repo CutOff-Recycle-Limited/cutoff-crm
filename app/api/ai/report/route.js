@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireViewer } from "../../../../lib/auth";
+import { listCrmOpsTasks } from "../../../../shared/ops-tasks";
 import { createSupabaseServerClient } from "../../../../lib/supabase/server";
 import { isSupabaseConfigured } from "../../../../lib/supabase/config";
 import { generateWeeklyReport } from "../../../../lib/ai";
@@ -21,16 +22,14 @@ export async function GET() {
 
   const [
     { data: interactions },
-    { data: tasks },
+    tasks,
     { data: customers },
   ] = await Promise.all([
     supabase
       .from("interactions")
       .select("id, channel, outcome, created_at, ai_insights(urgency, sentiment)")
       .order("created_at", { ascending: false }),
-    supabase
-      .from("tasks")
-      .select("id, status, due_date, priority"),
+    listCrmOpsTasks(supabase),
     supabase
       .from("customers")
       .select("id, name, type, lead_score"),
@@ -38,7 +37,7 @@ export async function GET() {
 
   const report = generateWeeklyReport({
     interactions: interactions || [],
-    tasks:        tasks        || [],
+    tasks,
     customers:    customers    || [],
   });
 
